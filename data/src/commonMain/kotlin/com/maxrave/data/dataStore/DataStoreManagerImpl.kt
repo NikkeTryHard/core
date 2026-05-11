@@ -947,6 +947,19 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    override val reverb =
+        settingsDataStore.data.map { preferences ->
+            preferences[REVERB] ?: 0f
+        }
+
+    override suspend fun setReverb(reverb: Float) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[REVERB] = reverb.coerceIn(0f, 1f)
+            }
+        }
+    }
+
     override val dataSyncId =
         settingsDataStore.data.map { preferences ->
             preferences[DATA_SYNC_ID] ?: ""
@@ -1429,6 +1442,7 @@ internal class DataStoreManagerImpl(
         val BLUR_PLAYER_BACKGROUND = stringPreferencesKey("blur_player_background")
         val PLAYBACK_SPEED = floatPreferencesKey("playback_speed")
         val PITCH = intPreferencesKey("pitch")
+        val REVERB = floatPreferencesKey("reverb")
         val OPEN_APP_TIME = intPreferencesKey("open_app_time")
         val DATA_SYNC_ID = stringPreferencesKey("data_sync_id")
         val VISITOR_DATA = stringPreferencesKey("visitor_data")

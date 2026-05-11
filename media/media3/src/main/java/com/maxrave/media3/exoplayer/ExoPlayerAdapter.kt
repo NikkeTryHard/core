@@ -225,6 +225,10 @@ class ExoPlayerAdapter(
             exoPlayer.skipSilenceEnabled = value
         }
 
+    override var reverb: Float
+        get() = 0f
+        set(value) = Unit
+
     // Listener management
     override fun addListener(listener: MediaPlayerListener) {
         listeners.add(listener)

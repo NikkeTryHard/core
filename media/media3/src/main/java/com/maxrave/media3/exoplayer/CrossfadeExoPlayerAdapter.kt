@@ -9,14 +9,13 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
-import androidx.media3.common.audio.SonicAudioProcessor
+import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
-import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
 import com.maxrave.domain.data.player.GenericMediaItem
 import com.maxrave.domain.data.player.GenericPlaybackParameters
 import com.maxrave.domain.data.player.PlayerConstants
@@ -28,6 +27,8 @@ import com.maxrave.domain.repository.StreamRepository
 import com.maxrave.logger.Logger
 import com.maxrave.media3.audio.BiquadFilter
 import com.maxrave.media3.audio.CrossfadeFilterAudioProcessor
+import com.maxrave.media3.audio.ReverbAudioProcessor
+import com.maxrave.media3.audio.HighQualityAudioProcessorChain
 import com.maxrave.media3.exoplayer.CrossfadeExoPlayerAdapter.Companion.AUTO_FALLBACK_DURATION_MS
 import com.maxrave.media3.service.mediasourcefactory.MergingMediaSourceFactory
 import kotlinx.coroutines.CancellationException
@@ -164,6 +165,7 @@ internal class CrossfadeExoPlayerAdapter(
         val player: ExoPlayer,
         val mediaItem: GenericMediaItem,
         val filter: CrossfadeFilterAudioProcessor? = null,
+        val reverb: ReverbAudioProcessor? = null,
     )
 
     // VideoId -> PrecachedPlayer
@@ -198,6 +200,15 @@ internal class CrossfadeExoPlayerAdapter(
 
     @Volatile
     private var secondaryPlayerFilter: CrossfadeFilterAudioProcessor? = null
+
+    @Volatile
+    private var currentPlayerReverb: ReverbAudioProcessor? = null
+
+    @Volatile
+    private var secondaryPlayerReverb: ReverbAudioProcessor? = null
+
+    @Volatile
+    private var internalReverb = 0f
 
     /** Index we're crossfading from; used when cancelling to revert localCurrentMediaItemIndex. */
     @Volatile
@@ -250,6 +261,7 @@ internal class CrossfadeExoPlayerAdapter(
     init {
         currentPlayer = initialPlayerWithFilter.player
         currentPlayerFilter = initialPlayerWithFilter.filter
+        currentPlayerReverb = initialPlayerWithFilter.reverb
 
         // Wire up playlist navigation so ForwardingPlayer (and thus MediaSession)
         // can see the full playlist state instead of the single-item ExoPlayer state.
@@ -278,6 +290,7 @@ internal class CrossfadeExoPlayerAdapter(
     private data class PlayerWithFilter(
         val player: ExoPlayer,
         val filter: CrossfadeFilterAudioProcessor,
+        val reverb: ReverbAudioProcessor,
     )
 
     /**
@@ -290,6 +303,7 @@ internal class CrossfadeExoPlayerAdapter(
      */
     private fun createExoPlayerInstance(handleAudioFocus: Boolean = false): PlayerWithFilter {
         val crossfadeFilter = CrossfadeFilterAudioProcessor()
+        val reverbProcessor = ReverbAudioProcessor().also { it.wetMix = internalReverb }
 
         val perPlayerRenderers =
             object : DefaultRenderersFactory(context) {
@@ -303,16 +317,8 @@ internal class CrossfadeExoPlayerAdapter(
                         .setEnableFloatOutput(enableFloatOutput)
                         .setEnableAudioOutputPlaybackParameters(enableAudioTrackPlaybackParams)
                         .setAudioProcessorChain(
-                            DefaultAudioSink.DefaultAudioProcessorChain(
-                                arrayOf(crossfadeFilter),
-                                SilenceSkippingAudioProcessor(
-                                    2_000_000,
-                                    (20_000 / 2_000_000).toFloat(),
-                                    2_000_000,
-                                    0,
-                                    256,
-                                ),
-                                SonicAudioProcessor(),
+                            HighQualityAudioProcessorChain(
+                                arrayOf<AudioProcessor>(crossfadeFilter, reverbProcessor),
                             ),
                         ).build()
             }
@@ -338,7 +344,7 @@ internal class CrossfadeExoPlayerAdapter(
                 .setRenderersFactory(perPlayerRenderers)
                 .build()
 
-        return PlayerWithFilter(player, crossfadeFilter)
+        return PlayerWithFilter(player, crossfadeFilter, reverbProcessor)
     }
 
     // ========== Playback Control ==========
@@ -407,6 +413,7 @@ internal class CrossfadeExoPlayerAdapter(
                 secondaryPlayer?.release()
                 secondaryPlayer = null
                 secondaryPlayerFilter = null
+                secondaryPlayerReverb = null
             }
 
             when (internalState) {
@@ -471,6 +478,7 @@ internal class CrossfadeExoPlayerAdapter(
                 secondaryPlayer?.release()
                 secondaryPlayer = null
                 secondaryPlayerFilter = null
+                secondaryPlayerReverb = null
                 setCrossfading(false)
             }
 
@@ -508,6 +516,7 @@ internal class CrossfadeExoPlayerAdapter(
                     secondaryPlayer?.release()
                     secondaryPlayer = null
                     secondaryPlayerFilter = null
+                    secondaryPlayerReverb = null
                     setCrossfading(false)
                 }
                 seekTo(localCurrentMediaItemIndex, 0)
@@ -531,6 +540,7 @@ internal class CrossfadeExoPlayerAdapter(
                 secondaryPlayer?.release()
                 secondaryPlayer = null
                 secondaryPlayerFilter = null
+                secondaryPlayerReverb = null
                 setCrossfading(false)
                 if (crossfadeFromIndex >= 0) {
                     localCurrentMediaItemIndex = crossfadeFromIndex
@@ -579,6 +589,7 @@ internal class CrossfadeExoPlayerAdapter(
                 secondaryPlayer?.release()
                 secondaryPlayer = null
                 secondaryPlayerFilter = null
+                secondaryPlayerReverb = null
                 setCrossfading(false)
                 if (crossfadeFromIndex >= 0) {
                     localCurrentMediaItemIndex = crossfadeFromIndex
@@ -1004,6 +1015,14 @@ internal class CrossfadeExoPlayerAdapter(
             secondaryPlayer?.playbackParameters = params
         }
 
+    override var reverb: Float
+        get() = internalReverb
+        set(value) {
+            internalReverb = value.coerceIn(0f, 1f)
+            currentPlayerReverb?.wetMix = internalReverb
+            secondaryPlayerReverb?.wetMix = internalReverb
+        }
+
     // ========== Audio Settings ==========
 
     override val audioSessionId: Int
@@ -1050,7 +1069,9 @@ internal class CrossfadeExoPlayerAdapter(
         secondaryPlayer?.release()
         secondaryPlayer = null
         secondaryPlayerFilter = null
+        secondaryPlayerReverb = null
         currentPlayerFilter = null
+        currentPlayerReverb = null
         isCrossfading = false
 
         coroutineScope.cancel()
@@ -1189,15 +1210,18 @@ internal class CrossfadeExoPlayerAdapter(
                     val cachedPlayerEntry = precachedPlayers.remove(videoId)
                     val player: ExoPlayer
                     val playerFilter: CrossfadeFilterAudioProcessor?
+                    val playerReverb: ReverbAudioProcessor?
                     if (cachedPlayerEntry?.player != null) {
                         Logger.d(TAG, "Using precached player for $videoId")
                         player = cachedPlayerEntry.player
                         playerFilter = cachedPlayerEntry.filter
+                        playerReverb = cachedPlayerEntry.reverb
                     } else {
                         Logger.d(TAG, "Creating new player for $videoId")
                         val pwf = createExoPlayerInstance(handleAudioFocus = false)
                         player = pwf.player
                         playerFilter = pwf.filter
+                        playerReverb = pwf.reverb
                         player.setMediaItem(mediaItem.toMedia3MediaItem())
                         player.prepare()
                     }
@@ -1217,6 +1241,7 @@ internal class CrossfadeExoPlayerAdapter(
                     // 3. Set new player as current
                     currentPlayer = player
                     currentPlayerFilter = playerFilter
+                    currentPlayerReverb = playerReverb
 
                     // 4. Setup our listener on new player
                     setupPlayerListenerInternal(player)
@@ -1250,6 +1275,7 @@ internal class CrossfadeExoPlayerAdapter(
                     player.volume = internalVolume
                     player.playbackParameters = PlaybackParameters(internalPlaybackSpeed, internalPlaybackPitch)
                     player.skipSilenceEnabled = internalSkipSilence
+                    currentPlayerReverb?.wetMix = internalReverb
 
                     // Seek if needed
                     if (startPositionMs > 0) {
@@ -1552,13 +1578,16 @@ internal class CrossfadeExoPlayerAdapter(
                 val cachedPlayerEntry = precachedPlayers.remove(nextVideoId)
                 val nextPlayer: ExoPlayer
                 val nextFilter: CrossfadeFilterAudioProcessor?
+                val nextReverb: ReverbAudioProcessor?
                 if (cachedPlayerEntry?.player != null) {
                     nextPlayer = cachedPlayerEntry.player
                     nextFilter = cachedPlayerEntry.filter
+                    nextReverb = cachedPlayerEntry.reverb
                 } else {
                     val pwf = createExoPlayerInstance(handleAudioFocus = false)
                     nextPlayer = pwf.player
                     nextFilter = pwf.filter
+                    nextReverb = pwf.reverb
                     nextPlayer.setMediaItem(nextMediaItem.toMedia3MediaItem())
                     nextPlayer.prepare()
                 }
@@ -1566,10 +1595,12 @@ internal class CrossfadeExoPlayerAdapter(
                 // Setup secondary player
                 secondaryPlayer = nextPlayer
                 secondaryPlayerFilter = nextFilter
+                secondaryPlayerReverb = nextReverb
                 // *** KEY: Move our custom listener from current to next player ***
                 setupPlayerListenerInternal(nextPlayer)
                 // Playback parameters applied below after AutoMix ratios are calculated
                 nextPlayer.skipSilenceEnabled = internalSkipSilence
+                secondaryPlayerReverb?.wetMix = internalReverb
                 nextPlayer.volume = 0f
 
                 // === CRITICAL ORDER for MediaSession notification ===
@@ -1809,6 +1840,7 @@ internal class CrossfadeExoPlayerAdapter(
                     nextPlayer.release()
                     secondaryPlayer = null
                     secondaryPlayerFilter = null
+                    secondaryPlayerReverb = null
                     setCrossfading(false)
                 }
             }
@@ -2192,8 +2224,10 @@ internal class CrossfadeExoPlayerAdapter(
         // Promote secondary to current
         currentPlayer = nextPlayer
         currentPlayerFilter = secondaryPlayerFilter
+        currentPlayerReverb = secondaryPlayerReverb
         secondaryPlayer = null
         secondaryPlayerFilter = null
+        secondaryPlayerReverb = null
         // localCurrentMediaItemIndex already updated in triggerCrossfadeTransition()
 
         // Enable audio focus and headphone-disconnect handling on new current player
@@ -2347,7 +2381,7 @@ internal class CrossfadeExoPlayerAdapter(
                             val pwf = createExoPlayerInstance(handleAudioFocus = false)
                             pwf.player.setMediaItem(mediaItem.toMedia3MediaItem())
                             pwf.player.prepare()
-                            precachedPlayers[mediaItem.mediaId] = PrecachedPlayer(pwf.player, mediaItem, pwf.filter)
+                            precachedPlayers[mediaItem.mediaId] = PrecachedPlayer(pwf.player, mediaItem, pwf.filter, pwf.reverb)
                             Logger.d(TAG, "Precached player for index $idx")
                         } catch (e: Exception) {
                             Logger.e(TAG, "Precaching error for $idx: ${e.message}")

@@ -404,6 +404,12 @@ class JvmMediaPlayerHandlerImpl(
                         Logger.w(TAG, "Playback current speed: ${player.playbackParameters.speed}, Pitch: ${player.playbackParameters.pitch}")
                     }
                 }
+            val reverbJob =
+                launch {
+                    dataStoreManager.reverb.collectLatest { reverb ->
+                        player.reverb = reverb
+                    }
+                }
             val discordRPCEnabledJob =
                 launch {
                     dataStoreManager.richPresenceEnabled
@@ -426,6 +432,7 @@ class JvmMediaPlayerHandlerImpl(
             skipSegmentsJob.join()
             playbackJob.join()
             playbackSpeedPitchJob.join()
+            reverbJob.join()
             discordRPCEnabledJob.join()
         }
     }

@@ -78,7 +78,7 @@ class CrossfadeFilterAudioProcessor : BaseAudioProcessor() {
         return inputAudioFormat
     }
 
-    override fun isActive(): Boolean = true
+    override fun isActive(): Boolean = enabled
 
     override fun queueInput(inputBuffer: ByteBuffer) {
         val remaining = inputBuffer.remaining()
@@ -147,9 +147,9 @@ class CrossfadeFilterAudioProcessor : BaseAudioProcessor() {
         while (input.remaining() >= 4) {
             val left = input.short.toDouble() / Short.MAX_VALUE
             val right = input.short.toDouble() / Short.MAX_VALUE
-            val (filteredL, filteredR) = filter.processStereo(left, right)
-            output.putShort((filteredL.coerceIn(-1.0, 1.0) * Short.MAX_VALUE).toInt().toShort())
-            output.putShort((filteredR.coerceIn(-1.0, 1.0) * Short.MAX_VALUE).toInt().toShort())
+            filter.processStereo(left, right)
+            output.putShort((filter.outLeft.coerceIn(-1.0, 1.0) * Short.MAX_VALUE).toInt().toShort())
+            output.putShort((filter.outRight.coerceIn(-1.0, 1.0) * Short.MAX_VALUE).toInt().toShort())
         }
     }
 

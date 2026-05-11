@@ -354,6 +354,12 @@ internal class MediaServiceHandlerImpl(
                         Logger.w(TAG, "Playback current speed: ${player.playbackParameters.speed}, Pitch: ${player.playbackParameters.pitch}")
                     }
                 }
+            val reverbJob =
+                launch {
+                    dataStoreManager.reverb.collectLatest { reverb ->
+                        player.reverb = reverb
+                    }
+                }
             val discordRPCEnabledJob =
                 launch {
                     dataStoreManager.richPresenceEnabled.collectLatest {
@@ -376,6 +382,7 @@ internal class MediaServiceHandlerImpl(
             skipSegmentsJob.join()
             playbackJob.join()
             playbackSpeedPitchJob.join()
+            reverbJob.join()
             discordRPCEnabledJob.join()
         }
     }

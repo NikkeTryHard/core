@@ -234,6 +234,10 @@ interface DataStoreManager {
 
     fun setPitch(pitch: Int)
 
+    val reverb: Flow<Float>
+
+    suspend fun setReverb(reverb: Float)
+
     val dataSyncId: Flow<String>
 
     suspend fun setDataSyncId(dataSyncId: String)

@@ -97,6 +97,7 @@ interface MediaPlayerInterface {
     val audioSessionId: Int
     var volume: Float
     var skipSilenceEnabled: Boolean
+    var reverb: Float
 
     // Listener management
     fun addListener(listener: MediaPlayerListener)

@@ -858,6 +858,10 @@ class VlcPlayerAdapter(
             notifyListeners { onVolumeChanged(internalVolume) }
         }
 
+    override var reverb: Float
+        get() = 0f
+        set(value) = Unit
+
     override var skipSilenceEnabled: Boolean = false
 
     // ========== Listener Management ==========

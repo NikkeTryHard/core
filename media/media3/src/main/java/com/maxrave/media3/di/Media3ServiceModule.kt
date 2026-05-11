@@ -12,7 +12,7 @@ import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
-import androidx.media3.common.audio.SonicAudioProcessor
+import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.DatabaseProvider
 import androidx.media3.database.StandaloneDatabaseProvider
@@ -32,7 +32,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.LoadControl
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
-import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
+import com.maxrave.media3.audio.HighQualityAudioProcessorChain
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.extractor.ExtractorsFactory
 import androidx.media3.extractor.flac.FlacExtractor
@@ -419,17 +419,7 @@ private fun provideRendererFactory(context: Context): DefaultRenderersFactory =
                 .setEnableFloatOutput(enableFloatOutput)
                 .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
                 .setAudioProcessorChain(
-                    DefaultAudioSink.DefaultAudioProcessorChain(
-                        emptyArray(),
-                        SilenceSkippingAudioProcessor(
-                            2_000_000,
-                            (20_000 / 2_000_000).toFloat(),
-                            2_000_000,
-                            0,
-                            256,
-                        ),
-                        SonicAudioProcessor(),
-                    ),
+                    HighQualityAudioProcessorChain(emptyArray<AudioProcessor>()),
                 ).build()
     }
 
