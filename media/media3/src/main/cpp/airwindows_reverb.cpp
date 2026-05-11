@@ -58,8 +58,8 @@ void AirwindowsReverb::clear() {
 void AirwindowsReverb::updateParameters() {
     const double big = sizeParam_;
     const double wet = wetParam_;
-    const double size = (std::pow(big, 2.0) * 75.0) + 25.0;
-
+    const double bigSquared = big * big;
+    const double size = (bigSquared * 75.0) + 25.0;
     delayA_ = static_cast<int>(79 * size);
     delayB_ = static_cast<int>(73 * size);
     delayC_ = static_cast<int>(71 * size);
@@ -88,17 +88,21 @@ void AirwindowsReverb::updateParameters() {
         (*biquad)[5] = 2.0 * (k * k - 1.0) * norm;
         (*biquad)[6] = (1.0 - k / (*biquad)[1] + k * k) * norm;
     }
+
+    const double depthBase = 1.0 - (0.82 - (((1.0 - big) * 0.7) + (size * 0.002)));
+    const double depthSquared = depthBase * depthBase;
+    regen_ = (1.0 - (depthSquared * depthSquared)) * 0.5;
+    blend_ = 0.955 - (size * 0.007);
+    dryMix_ = 1.0 - wet;
+    wetMix_ = wet;
 }
 
 void AirwindowsReverb::process(double inL, double inR, double& outL, double& outR) {
-    const double big = sizeParam_;
-    const double wet = wetParam_;
+    const double wet = wetMix_;
     const double vibSpeed = 0.1;
     const double vibDepth = 7.0;
-    const double size = (std::pow(big, 2.0) * 75.0) + 25.0;
-    const double depthFactor = 1.0 - std::pow((1.0 - (0.82 - (((1.0 - big) * 0.7) + (size * 0.002)))), 4.0);
-    const double blend = 0.955 - (size * 0.007);
-    const double regen = depthFactor * 0.5;
+    const double blend = blend_;
+    const double regen = regen_;
 
     double inputSampleL = sanitize(inL, fpdL_);
     double inputSampleR = sanitize(inR, fpdR_);
@@ -240,9 +244,9 @@ void AirwindowsReverb::process(double inL, double inR, double& outL, double& out
     biquadC_[10] = (inputSampleR * biquadC_[4]) - (tempSampleR * biquadC_[6]);
     inputSampleR = tempSampleR;
 
-    if (wet != 1.0) {
-        inputSampleL += drySampleL * (1.0 - wet);
-        inputSampleR += drySampleR * (1.0 - wet);
+    if (dryMix_ > 0.0) {
+        inputSampleL += drySampleL * dryMix_;
+        inputSampleR += drySampleR * dryMix_;
     }
 
     outL = std::clamp(inputSampleL, -1.0, 1.0);

@@ -37,20 +37,17 @@ class ReverbAudioProcessor : BaseAudioProcessor() {
             return AudioProcessor.AudioFormat.NOT_SET
         }
         recreate(inputAudioFormat.sampleRate, inputAudioFormat.channelCount)
-        return inputAudioFormat
+        return if (isActive()) inputAudioFormat else AudioProcessor.AudioFormat.NOT_SET
     }
 
-    override fun isActive(): Boolean = true
+    override fun isActive(): Boolean = wetMix > ACTIVE_EPSILON
 
     override fun queueInput(inputBuffer: ByteBuffer) {
         val remaining = inputBuffer.remaining()
         if (remaining == 0) return
 
-        val output = replaceOutputBuffer(remaining)
-        inputBuffer.order(ByteOrder.nativeOrder())
-        output.order(ByteOrder.nativeOrder())
-
-        if (wetMix <= 0f) {
+        if (!isActive()) {
+            val output = replaceOutputBuffer(remaining)
             copyBuffer(inputBuffer, output, remaining)
             output.flip()
             return
@@ -59,6 +56,18 @@ class ReverbAudioProcessor : BaseAudioProcessor() {
         applyWetIfNeeded()
         val frameCount = remaining / (channelCount * BYTES_PER_SAMPLE)
         val sampleCount = frameCount * channelCount
+        val byteCount = sampleCount * BYTES_PER_SAMPLE
+        val output = replaceOutputBuffer(byteCount)
+        inputBuffer.order(ByteOrder.nativeOrder())
+        output.order(ByteOrder.nativeOrder())
+
+        if (inputBuffer.isDirect && output.isDirect && bridge?.nativeProcessDirect(handle, inputBuffer, inputBuffer.position(), output, output.position(), frameCount, channelCount) == true) {
+            inputBuffer.position(inputBuffer.position() + byteCount)
+            output.position(output.position() + byteCount)
+            output.flip()
+            return
+        }
+
         ensureCapacity(sampleCount)
         for (i in 0 until sampleCount) {
             inputShorts[i] = inputBuffer.short
@@ -137,5 +146,6 @@ class ReverbAudioProcessor : BaseAudioProcessor() {
 
     private companion object {
         private const val BYTES_PER_SAMPLE = 2
+        private const val ACTIVE_EPSILON = 0.0001f
     }
 }

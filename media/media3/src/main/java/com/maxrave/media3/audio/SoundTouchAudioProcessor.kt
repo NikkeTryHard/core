@@ -31,6 +31,7 @@ class SoundTouchAudioProcessor : BaseAudioProcessor() {
     private val bridge = NativeSoundTouchBridge()
     private var handle = 0L
     private var channelCount = 0
+    private var sampleRate = 0
     private var paramsDirty = true
     private var inputShorts = ShortArray(0)
     private var outputShorts = ShortArray(0)
@@ -50,31 +51,42 @@ class SoundTouchAudioProcessor : BaseAudioProcessor() {
     override fun queueInput(inputBuffer: ByteBuffer) {
         val remaining = inputBuffer.remaining()
         if (remaining == 0) return
-        if (!isActive() || handle == 0L) {
+        if (!isActive()) {
             val output = replaceOutputBuffer(remaining)
             copyBuffer(inputBuffer, output, remaining)
             output.flip()
             return
         }
 
+        ensureNative()
+        if (handle == 0L) return
         applyParamsIfNeeded()
         inputBuffer.order(ByteOrder.nativeOrder())
         val frameCount = remaining / (channelCount * BYTES_PER_SAMPLE)
         val sampleCount = frameCount * channelCount
-        ensureInputCapacity(sampleCount)
-        for (i in 0 until sampleCount) {
-            inputShorts[i] = inputBuffer.short
+        val byteCount = sampleCount * BYTES_PER_SAMPLE
+        if (inputBuffer.isDirect) {
+            bridge.nativePutSamplesDirect(handle, inputBuffer, inputBuffer.position(), frameCount)
+            inputBuffer.position(inputBuffer.position() + byteCount)
+        } else {
+            ensureInputCapacity(sampleCount)
+            for (i in 0 until sampleCount) {
+                inputShorts[i] = inputBuffer.short
+            }
+            bridge.nativePutSamples(handle, inputShorts, 0, frameCount)
         }
-        bridge.nativePutSamples(handle, inputShorts, 0, frameCount)
-        drainNativeUntilEmpty(frameCount + EXTRA_OUTPUT_FRAMES)
+        drainNativeOutput(frameCount + EXTRA_OUTPUT_FRAMES)
     }
 
     override fun onQueueEndOfStream() {
         inputEnded = true
-        if (isActive() && handle != 0L && !nativeFlushed) {
-            bridge.nativeFlush(handle)
-            nativeFlushed = true
-            drainNativeUntilEmpty(END_OF_STREAM_OUTPUT_FRAMES)
+        if (isActive()) {
+            ensureNative()
+            if (handle != 0L && !nativeFlushed) {
+                bridge.nativeFlush(handle)
+                nativeFlushed = true
+                drainNativeOutput(END_OF_STREAM_OUTPUT_FRAMES)
+            }
         }
     }
 
@@ -89,7 +101,7 @@ class SoundTouchAudioProcessor : BaseAudioProcessor() {
 
     override fun onReset() {
         releaseNative()
-        channelCount = 0
+        sampleRate = 0
         inputEnded = false
         nativeFlushed = false
         inputShorts = ShortArray(0)
@@ -99,14 +111,13 @@ class SoundTouchAudioProcessor : BaseAudioProcessor() {
     override fun isEnded(): Boolean = inputEnded && !hasPendingOutput()
 
     private fun recreate(
-        sampleRate: Int,
+        newSampleRate: Int,
         channels: Int,
     ) {
         releaseNative()
+        sampleRate = newSampleRate
         channelCount = channels
-        handle = bridge.nativeCreate(sampleRate, channels)
         paramsDirty = true
-        applyParamsIfNeeded(force = true)
     }
 
     private fun releaseNative() {
@@ -123,21 +134,43 @@ class SoundTouchAudioProcessor : BaseAudioProcessor() {
         }
     }
 
-    private fun drainNativeUntilEmpty(maxFrames: Int) {
-        while (true) {
-            ensureOutputCapacity(maxFrames * channelCount)
-            val receivedFrames = bridge.nativeReceiveSamples(handle, outputShorts, maxFrames)
-            if (receivedFrames <= 0) return
-            val byteCount = receivedFrames * channelCount * BYTES_PER_SAMPLE
-            val output = replaceOutputBuffer(byteCount)
-            output.order(ByteOrder.nativeOrder())
-            val sampleCount = receivedFrames * channelCount
+    private fun ensureNative() {
+        if (handle == 0L && sampleRate > 0 && channelCount > 0) {
+            handle = bridge.nativeCreate(sampleRate, channelCount)
+            paramsDirty = true
+            applyParamsIfNeeded(force = true)
+        }
+    }
+
+    private fun drainNativeOutput(maxFrames: Int) {
+        val availableFrames = bridge.nativeAvailableSamples(handle)
+        val framesToRead = when {
+            availableFrames > 0 -> availableFrames
+            inputEnded -> maxFrames
+            else -> maxFrames
+        }
+        val byteCount = framesToRead * channelCount * BYTES_PER_SAMPLE
+        val output = replaceOutputBuffer(byteCount)
+        output.order(ByteOrder.nativeOrder())
+        val receivedFrames = if (output.isDirect) {
+            bridge.nativeReceiveSamplesDirect(handle, output, output.position(), framesToRead)
+        } else {
+            ensureOutputCapacity(framesToRead * channelCount)
+            val received = bridge.nativeReceiveSamples(handle, outputShorts, framesToRead)
+            val sampleCount = received * channelCount
             for (i in 0 until sampleCount) {
                 output.putShort(outputShorts[i])
             }
-            output.flip()
-            if (receivedFrames < maxFrames) return
+            received
         }
+        if (receivedFrames <= 0) {
+            output.limit(0)
+            return
+        }
+        if (output.isDirect) {
+            output.position(output.position() + receivedFrames * channelCount * BYTES_PER_SAMPLE)
+        }
+        output.flip()
     }
 
     private fun ensureInputCapacity(sampleCount: Int) {

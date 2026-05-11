@@ -1,5 +1,6 @@
 package com.maxrave.media3.audio
 
+import java.nio.ByteBuffer
 internal class NativeSoundTouchBridge {
     external fun nativeCreate(
         sampleRate: Int,
@@ -21,11 +22,27 @@ internal class NativeSoundTouchBridge {
         frameCount: Int,
     ): Int
 
+    external fun nativePutSamplesDirect(
+        handle: Long,
+        input: ByteBuffer,
+        offsetBytes: Int,
+        frameCount: Int,
+    ): Int
+
     external fun nativeReceiveSamples(
         handle: Long,
         output: ShortArray,
         maxFrames: Int,
     ): Int
+
+    external fun nativeReceiveSamplesDirect(
+        handle: Long,
+        output: ByteBuffer,
+        offsetBytes: Int,
+        maxFrames: Int,
+    ): Int
+
+    external fun nativeAvailableSamples(handle: Long): Int
 
     external fun nativeFlush(handle: Long)
 

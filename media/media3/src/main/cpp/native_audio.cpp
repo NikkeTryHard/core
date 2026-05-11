@@ -44,7 +44,15 @@ public:
     }
 
     jint put(const jshort* input, int frameCount) {
-        if (frameCount <= 0) return 0;
+        return putPcm16(reinterpret_cast<const int16_t*>(input), frameCount);
+    }
+
+    jint available() const {
+        return static_cast<jint>(soundTouch_.numSamples());
+    }
+
+    jint putPcm16(const int16_t* input, int frameCount) {
+        if (frameCount <= 0 || input == nullptr) return 0;
         const int sampleCount = frameCount * channelCount_;
         inputFloat_.resize(static_cast<size_t>(sampleCount));
         constexpr float scale = 1.0f / 32768.0f;
@@ -66,6 +74,10 @@ public:
             output[i] = static_cast<jshort>(std::lrintf(clipped * 32767.0f));
         }
         return static_cast<jint>(received);
+    }
+
+    jint receivePcm16(int16_t* output, int maxFrames) {
+        return receive(reinterpret_cast<jshort*>(output), maxFrames);
     }
 
     void flush() { soundTouch_.flush(); }
@@ -159,6 +171,16 @@ Java_com_maxrave_media3_audio_NativeSoundTouchBridge_nativePutSamples(
 }
 
 extern "C" JNIEXPORT jint JNICALL
+Java_com_maxrave_media3_audio_NativeSoundTouchBridge_nativePutSamplesDirect(
+        JNIEnv* env, jobject, jlong handle, jobject input, jint offsetBytes, jint frameCount) {
+    auto* processor = fromHandle(handle);
+    if (processor == nullptr || input == nullptr || frameCount <= 0 || offsetBytes < 0) return 0;
+    auto* bytes = static_cast<uint8_t*>(env->GetDirectBufferAddress(input));
+    if (bytes == nullptr) return 0;
+    return processor->putPcm16(reinterpret_cast<const int16_t*>(bytes + offsetBytes), frameCount);
+}
+
+extern "C" JNIEXPORT jint JNICALL
 Java_com_maxrave_media3_audio_NativeSoundTouchBridge_nativeReceiveSamples(
         JNIEnv* env, jobject, jlong handle, jshortArray output, jint maxFrames) {
     auto* processor = fromHandle(handle);
@@ -169,6 +191,23 @@ Java_com_maxrave_media3_audio_NativeSoundTouchBridge_nativeReceiveSamples(
     const jint received = processor->receive(data, maxFrames);
     env->ReleaseShortArrayElements(output, data, 0);
     return received;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_maxrave_media3_audio_NativeSoundTouchBridge_nativeReceiveSamplesDirect(
+        JNIEnv* env, jobject, jlong handle, jobject output, jint offsetBytes, jint maxFrames) {
+    auto* processor = fromHandle(handle);
+    if (processor == nullptr || output == nullptr || maxFrames <= 0 || offsetBytes < 0) return 0;
+    auto* bytes = static_cast<uint8_t*>(env->GetDirectBufferAddress(output));
+    if (bytes == nullptr) return 0;
+    return processor->receivePcm16(reinterpret_cast<int16_t*>(bytes + offsetBytes), maxFrames);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_maxrave_media3_audio_NativeSoundTouchBridge_nativeAvailableSamples(
+        JNIEnv*, jobject, jlong handle) {
+    auto* processor = fromHandle(handle);
+    return processor == nullptr ? 0 : processor->available();
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -219,6 +258,22 @@ Java_com_maxrave_media3_audio_NativeReverbBridge_nativeProcess(
     }
     if (inData != nullptr) env->ReleaseShortArrayElements(input, inData, JNI_ABORT);
     if (outData != nullptr) env->ReleaseShortArrayElements(output, outData, 0);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_maxrave_media3_audio_NativeReverbBridge_nativeProcessDirect(
+        JNIEnv* env, jobject, jlong handle, jobject input, jint inputOffsetBytes, jobject output, jint outputOffsetBytes, jint frameCount, jint channelCount) {
+    auto* reverb = reverbFromHandle(handle);
+    if (reverb == nullptr || input == nullptr || output == nullptr || frameCount <= 0 || channelCount <= 0 || channelCount > 2 || inputOffsetBytes < 0 || outputOffsetBytes < 0) return JNI_FALSE;
+    auto* inBytes = static_cast<uint8_t*>(env->GetDirectBufferAddress(input));
+    auto* outBytes = static_cast<uint8_t*>(env->GetDirectBufferAddress(output));
+    if (inBytes == nullptr || outBytes == nullptr) return JNI_FALSE;
+    reverb->process(
+            reinterpret_cast<const jshort*>(inBytes + inputOffsetBytes),
+            reinterpret_cast<jshort*>(outBytes + outputOffsetBytes),
+            frameCount,
+            channelCount);
+    return JNI_TRUE;
 }
 
 extern "C" JNIEXPORT void JNICALL

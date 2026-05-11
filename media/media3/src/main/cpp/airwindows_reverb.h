@@ -26,6 +26,10 @@ private:
     double sampleRate_ = 44100.0;
     double sizeParam_ = 0.5;
     double wetParam_ = 0.0;
+    double regen_ = 0.0;
+    double blend_ = 0.0;
+    double dryMix_ = 1.0;
+    double wetMix_ = 0.0;
 
     std::array<double, 11> biquadA_{};
     std::array<double, 11> biquadB_{};
